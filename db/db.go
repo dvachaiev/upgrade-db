@@ -21,11 +21,28 @@ func (v Version) String() string {
 }
 
 func (v Version) Less(a Version) bool {
-	for i, el := range v.seq {
+	len_a, len_v := len(a.seq), len(v.seq)
+
+	var max_len int
+	if len_a > len_v {
+		max_len = len_a
+	} else {
+		max_len = len_v
+	}
+
+	for i := 0; i < max_len; i++ {
+		el_a, el_v := 0, 0
+		if i < len_a {
+			el_a = a.seq[i]
+		}
+		if i < len_v {
+			el_v = v.seq[i]
+		}
+
 		switch {
-		case el < a.seq[i]:
+		case el_v < el_a:
 			return true
-		case el > a.seq[i]:
+		case el_v > el_a:
 			return false
 		}
 	}
