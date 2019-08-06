@@ -4,6 +4,25 @@ import (
 	"testing"
 )
 
+func TestString(t *testing.T) {
+	var tests = []struct {
+		seq      []int
+		expected string
+	}{
+		{[]int{128}, "128"},                 // single value
+		{[]int{128, 0}, "128.0"},            // ends with 0
+		{[]int{0, 128}, "0.128"},            // starts with 0
+		{[]int{1, 2, 3, 4, 5}, "1.2.3.4.5"}, // with 5 elements
+		{[]int{0}, "0"},                     // single zero
+		{[]int{0, 0, 0, 0}, "0.0.0.0"},      // several zeros
+	}
+	for _, test := range tests {
+		if ver := (Version{test.seq}); ver.String() != test.expected {
+			t.Error("Failed:", ver.String(), "!=", test.expected)
+		}
+	}
+}
+
 func TestLess(t *testing.T) {
 	var tests = []struct {
 		left, right []int
@@ -32,7 +51,7 @@ func TestLess(t *testing.T) {
 		lver := Version{test.left}
 		rver := Version{test.right}
 		if res := lver.Less(rver); res != test.expected {
-			t.Error("Failed:", lver, "<", rver, "==", test.expected)
+			t.Error("Failed:", lver, "<", rver, "!=", test.expected)
 		}
 	}
 }
