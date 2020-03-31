@@ -8,6 +8,7 @@ import (
 
 func TestString(t *testing.T) {
 	is := is.New(t)
+
 	var tests = []struct {
 		seq      []int
 		expected string
@@ -19,6 +20,7 @@ func TestString(t *testing.T) {
 		{[]int{0}, "0"},                     // single zero
 		{[]int{0, 0, 0, 0}, "0.0.0.0"},      // several zeros
 	}
+
 	for _, test := range tests {
 		ver := (Version{test.seq})
 		is.Equal(ver.String(), test.expected)
@@ -27,6 +29,7 @@ func TestString(t *testing.T) {
 
 func TestLess(t *testing.T) {
 	is := is.New(t)
+
 	var tests = []struct {
 		left, right []int
 		expected    bool
@@ -50,6 +53,7 @@ func TestLess(t *testing.T) {
 		{[]int{1, 1, 1}, []int{1, 1}, false},
 		{[]int{1, 2}, []int{1, 1, 1}, false},
 	}
+
 	for _, test := range tests {
 		lver := Version{test.left}
 		rver := Version{test.right}
@@ -59,11 +63,13 @@ func TestLess(t *testing.T) {
 
 func TestParseVersion(t *testing.T) {
 	is := is.NewRelaxed(t)
+
 	var empty []int
+
 	var tests = []struct {
 		input    string
 		expected []int
-		is_error bool
+		isError  bool
 	}{
 		{"128", []int{128}, false},                 // single value
 		{"128.0", []int{128, 0}, false},            // ends with 0
@@ -73,14 +79,16 @@ func TestParseVersion(t *testing.T) {
 		{"0.0.0.0", []int{0, 0, 0, 0}, false},      // several zeros
 
 		{"1.2.3.", empty, true},  // empty value at the end
-		{".1.2.3.", empty, true}, // empty value at the begining
+		{".1.2.3.", empty, true}, // empty value at the beginning
 		{"1..3.", empty, true},   // empty value in the middle
 		{"1.a.3.", empty, true},  // alpha in the middle
 	}
+
 	for _, test := range tests {
 		ver, err := ParseVersion(test.input)
 		is.Equal(ver.seq, test.expected)
-		if test.is_error {
+
+		if test.isError {
 			is.True(err != nil)
 		} else {
 			is.NoErr(err)
