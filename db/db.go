@@ -164,7 +164,7 @@ func removeUniqIndex(db *sql.DB) error {
 }
 
 func GetVersion(db *sql.DB) (Version, error) {
-	const query = "SELECT `version` FROM `_db_version` ORDER BY `applied_at` DESC LIMIT 1"
+	const query = "SELECT `version` FROM `_db_version` ORDER BY `rowid` DESC LIMIT 1"
 
 	var strVer string
 
