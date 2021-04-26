@@ -82,6 +82,9 @@ func listVersionFiles(path string, version db.Version) ([]string, []string) {
 	sort.Strings(upFiles)
 	sort.Strings(downFiles)
 
+	for i, j := 0, len(downFiles)-1; i < j; i, j = i+1, j-1 {
+		downFiles[i], downFiles[j] = downFiles[j], downFiles[i]
+	}
 	return upFiles, downFiles
 }
 
