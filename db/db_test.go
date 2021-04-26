@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/matryer/is"
@@ -58,6 +59,67 @@ func TestLess(t *testing.T) {
 		lver := Version{test.left}
 		rver := Version{test.right}
 		is.Equal(lver.Less(rver), test.expected)
+	}
+}
+
+func TestVersion_IsZero(t *testing.T) {
+	type fields struct {
+		seq []int
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		want   bool
+	}{
+		{name: "Nil slice", fields: fields{seq: nil}, want: true},
+		{name: "Empty slice", fields: fields{seq: []int{}}, want: true},
+		{name: "Non-empty slice", fields: fields{seq: []int{1, 2, 3}}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := Version{
+				seq: tt.fields.seq,
+			}
+			if got := v.IsZero(); got != tt.want {
+				t.Errorf("Version.IsZero() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVersion_Equal(t *testing.T) {
+	tests := []struct {
+		left, right []int
+		expected    bool
+	}{
+		// Equal
+		{[]int{1, 1, 1}, []int{1, 1, 1}, true},
+		{[]int{1, 0}, []int{1, 0, 0}, true},
+		{[]int{1, 0, 0}, []int{1, 0}, true},
+
+		// Left is less
+		{[]int{1, 1, 1}, []int{1, 1, 2}, false},
+		{[]int{1, 1, 1}, []int{1, 2, 1}, false},
+		{[]int{1, 1, 1}, []int{2, 1, 1}, false},
+		{[]int{1, 1, 1}, []int{1, 2}, false},
+		{[]int{1, 1}, []int{1, 1, 1}, false},
+
+		// Right is less
+		{[]int{1, 1, 2}, []int{1, 1, 1}, false},
+		{[]int{1, 2, 1}, []int{1, 1, 1}, false},
+		{[]int{2, 1, 1}, []int{1, 1, 1}, false},
+		{[]int{1, 1, 1}, []int{1, 1}, false},
+		{[]int{1, 2}, []int{1, 1, 1}, false},
+	}
+	for i, tt := range tests {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			is := is.New(t)
+
+			lver := Version{tt.left}
+			rver := Version{tt.right}
+
+			is.Equal(lver.Equal(rver), tt.expected)
+		})
 	}
 }
 

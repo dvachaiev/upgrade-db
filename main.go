@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/dvachaiev/upgrade-db/db"
 	_ "github.com/mattn/go-sqlite3"
@@ -58,26 +59,52 @@ func listVersions(path string) ([]db.Version, error) {
 	return versions, nil
 }
 
-func listVersionFiles(path string, version db.Version) []string {
+func listVersionFiles(path string, version db.Version) ([]string, []string) {
 	ptrn := "*.sql"
+	downSuffix := ".down.sql"
 
 	files, err := filepath.Glob(filepath.Join(path, version.String(), ptrn))
 	if err != nil {
 		panic(err)
 	}
 
-	sort.Strings(files)
+	var upFiles, downFiles []string
 
-	return files
+	for _, f := range files {
+		if strings.HasSuffix(f, downSuffix) {
+			downFiles = append(downFiles, f)
+			continue
+		}
+
+		upFiles = append(upFiles, f)
+	}
+
+	sort.Strings(upFiles)
+	sort.Strings(downFiles)
+
+	return upFiles, downFiles
 }
 
 func main() {
-	if len(os.Args) != 3 {
-		fmt.Println("Usage: migrate <db path> <migrations folder>")
+	if len(os.Args) < 3 || len(os.Args) > 4 {
+		fmt.Println("Usage: migrate <db path> <migrations folder> <version>")
 		os.Exit(ECodeBadArgs)
 	}
 
 	dbPath, migrPath := os.Args[1], os.Args[2]
+
+	var targetVer db.Version
+
+	if len(os.Args) == 4 {
+		ver, err := db.ParseVersion(os.Args[3])
+		if err != nil {
+			fmt.Println("Usage: migrate <db path> <migrations folder> <version>")
+			fmt.Println("Unable to parse target version:", err)
+			os.Exit(ECodeBadArgs)
+		}
+
+		targetVer = ver
+	}
 
 	dbc, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
@@ -87,7 +114,7 @@ func main() {
 
 	defer dbc.Close()
 
-	if err = db.CreateVersionTable(dbc); err != nil {
+	if err = db.PrepareVersionTable(dbc); err != nil {
 		fmt.Println(err)
 		os.Exit(ECodeBadDB)
 	}
@@ -106,19 +133,82 @@ func main() {
 		os.Exit(ECodeBadPath)
 	}
 
+	if targetVer.IsZero() {
+		targetVer = versions[len(versions)-1]
+	} else {
+		if !findVersion(targetVer, versions) {
+			fmt.Println("Specified version wasn't found in list of available versions")
+			os.Exit(ECodeBadArgs)
+		}
+	}
+
+	if dbVer.Less(targetVer) {
+		Upgrade(dbc, dbVer, targetVer, migrPath, versions)
+	} else {
+		Revert(dbc, dbVer, targetVer, migrPath, revertVersions(versions))
+	}
+}
+
+func Upgrade(dbc *sql.DB, dbVer, targetVer db.Version, migrPath string, versions []db.Version) {
 	for _, ver := range versions {
 		if ver.Less(dbVer) {
 			fmt.Println("\tSkipping version:", ver)
 			continue
 		}
 
-		fmt.Println("\tApplying version:", ver)
-		files := listVersionFiles(migrPath, ver)
+		if !ver.Less(targetVer) { // reached next version after target, have no sense to continue
+			fmt.Println("DB is upgraded")
+			break
+		}
 
-		err = db.UpgradeVersion(dbc, ver, files)
+		fmt.Println("\tApplying version:", ver)
+		files, _ := listVersionFiles(migrPath, ver)
+
+		err := db.ApplyVersion(dbc, ver, files)
 		if err != nil {
 			fmt.Println("Unable to upgrade DB:", err)
 			os.Exit(ECodeMigrFailed)
 		}
 	}
+}
+
+func Revert(dbc *sql.DB, dbVer, targetVer db.Version, migrPath string, versions []db.Version) {
+	for i, ver := range versions {
+		if !ver.Less(dbVer) {
+			fmt.Println("\tSkipping version:", ver)
+			continue
+		}
+
+		if ver.Less(targetVer) { // reached target version, have no sense to continue
+			fmt.Println("DB is reverted")
+			break
+		}
+
+		fmt.Println("\tReverting version:", ver)
+		_, files := listVersionFiles(migrPath, ver)
+
+		err := db.ApplyVersion(dbc, versions[i+1], files)
+		if err != nil {
+			fmt.Println("Unable to upgrade DB:", err)
+			os.Exit(ECodeMigrFailed)
+		}
+	}
+}
+
+func revertVersions(versions []db.Version) []db.Version {
+	for i, j := 0, len(versions)-1; i < j; i, j = i+1, j-1 {
+		versions[i], versions[j] = versions[j], versions[i]
+	}
+
+	return versions
+}
+
+func findVersion(version db.Version, versions []db.Version) bool {
+	for _, ver := range versions {
+		if ver.Equal(version) {
+			return true
+		}
+	}
+
+	return false
 }
