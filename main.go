@@ -145,6 +145,8 @@ func main() {
 		}
 	}
 
+	fmt.Println("Target version:", targetVer)
+
 	if dbVer.Less(targetVer) {
 		Upgrade(dbc, dbVer, targetVer, migrPath, versions)
 	} else {

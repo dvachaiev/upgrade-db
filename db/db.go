@@ -130,7 +130,7 @@ func removeUniqIndex(db *sql.DB) error {
 		queryCheck = `SELECT ii.name AS column_name FROM sqlite_master AS m, pragma_index_list(m.name) AS il, pragma_index_info(il.name) AS ii
 	  WHERE m.tbl_name = '_db_version' AND ii.name = 'version' AND m.type = 'table' AND il.origin = 'u'`
 
-		queryUpdate = `PRAGMA foreign_keys=off;
+		queryUpdate = `
 		BEGIN TRANSACTION;
 
 		ALTER TABLE _db_version RENAME TO _old_db_version;
@@ -144,8 +144,7 @@ func removeUniqIndex(db *sql.DB) error {
 
 		DROP TABLE _old_db_version;
 
-		COMMIT;
-		PRAGMA foreign_keys=on;`
+		COMMIT;`
 	)
 
 	var res interface{}
