@@ -4,9 +4,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"strconv"
 	"strings"
+
+	"github.com/spf13/afero"
 )
 
 type Version struct {
@@ -187,7 +188,7 @@ func setVersion(db *sql.Tx, version Version) error {
 	return err
 }
 
-func ApplyVersion(db *sql.DB, version Version, files []string) error {
+func ApplyVersion(db *sql.DB, version Version, fs afero.Fs, files []string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -198,7 +199,7 @@ func ApplyVersion(db *sql.DB, version Version, files []string) error {
 	for _, fname := range files {
 		fmt.Println("\t\tApplying", fname)
 
-		buf, err := ioutil.ReadFile(fname)
+		buf, err := afero.ReadFile(fs, fname)
 		if err != nil {
 			return err
 		}

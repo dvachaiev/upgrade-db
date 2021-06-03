@@ -1,16 +1,23 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/dvachaiev/upgrade-db/db"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/spf13/afero"
+	"github.com/spf13/afero/tarfs"
+
+	"github.com/dvachaiev/upgrade-db/db"
 )
 
 const (
@@ -20,18 +27,22 @@ const (
 	ECodeMigrFailed
 )
 
-func listVersions(path string) ([]db.Version, error) {
+func usageError(msg string) {
+	fmt.Printf("Usage: %s <db path> <migrations location> [<version>]\n", os.Args[0])
+
+	if msg != "" {
+		fmt.Println(msg)
+	}
+
+	os.Exit(ECodeBadArgs)
+}
+
+func listVersions(fs afero.Fs) ([]db.Version, error) {
 	ptrn := regexp.MustCompile(`^[0-9]+(\.[0-9]+)*$`)
 
 	var versions []db.Version
 
-	f, err := os.Open(path)
-	if err != nil {
-		return versions, err
-	}
-	defer f.Close()
-
-	files, err := f.Readdir(-1)
+	files, err := afero.ReadDir(fs, ".")
 	if err != nil {
 		return versions, err
 	}
@@ -59,11 +70,11 @@ func listVersions(path string) ([]db.Version, error) {
 	return versions, nil
 }
 
-func listVersionFiles(path string, version db.Version) ([]string, []string) {
+func listVersionFiles(fs afero.Fs, version db.Version) ([]string, []string) {
 	ptrn := "*.sql"
 	downSuffix := ".down.sql"
 
-	files, err := filepath.Glob(filepath.Join(path, version.String(), ptrn))
+	files, err := afero.Glob(fs, filepath.Join(version.String(), ptrn))
 	if err != nil {
 		panic(err)
 	}
@@ -90,20 +101,22 @@ func listVersionFiles(path string, version db.Version) ([]string, []string) {
 
 func main() {
 	if len(os.Args) < 3 || len(os.Args) > 4 {
-		fmt.Println("Usage: migrate <db path> <migrations folder> <version>")
-		os.Exit(ECodeBadArgs)
+		usageError("")
 	}
 
 	dbPath, migrPath := os.Args[1], os.Args[2]
+
+	fs, err := getFS(migrPath)
+	if err != nil {
+		usageError(fmt.Sprintf("Migrations path error: %s", err))
+	}
 
 	var targetVer db.Version
 
 	if len(os.Args) == 4 {
 		ver, err := db.ParseVersion(os.Args[3])
 		if err != nil {
-			fmt.Println("Usage: migrate <db path> <migrations folder> <version>")
-			fmt.Println("Unable to parse target version:", err)
-			os.Exit(ECodeBadArgs)
+			usageError(fmt.Sprintf("Unable to parse target version: %s", err))
 		}
 
 		targetVer = ver
@@ -130,7 +143,7 @@ func main() {
 
 	fmt.Println("DB version:", dbVer)
 
-	versions, err := listVersions(migrPath)
+	versions, err := listVersions(fs)
 	if err != nil {
 		fmt.Println("Unable to get list of available versions:", err)
 		os.Exit(ECodeBadPath)
@@ -138,23 +151,18 @@ func main() {
 
 	if targetVer.IsZero() {
 		targetVer = versions[len(versions)-1]
-	} else {
-		if !findVersion(targetVer, versions) {
-			fmt.Println("Specified version wasn't found in list of available versions")
-			os.Exit(ECodeBadArgs)
-		}
 	}
 
 	fmt.Println("Target version:", targetVer)
 
 	if dbVer.Less(targetVer) {
-		Upgrade(dbc, dbVer, targetVer, migrPath, versions)
+		Upgrade(dbc, dbVer, targetVer, fs, versions)
 	} else {
-		Revert(dbc, dbVer, targetVer, migrPath, revertVersions(versions))
+		Revert(dbc, dbVer, targetVer, fs, revertVersions(versions))
 	}
 }
 
-func Upgrade(dbc *sql.DB, dbVer, targetVer db.Version, migrPath string, versions []db.Version) {
+func Upgrade(dbc *sql.DB, dbVer, targetVer db.Version, fs afero.Fs, versions []db.Version) {
 	for _, ver := range versions {
 		if ver.Less(dbVer) {
 			fmt.Println("\tSkipping version:", ver)
@@ -162,14 +170,13 @@ func Upgrade(dbc *sql.DB, dbVer, targetVer db.Version, migrPath string, versions
 		}
 
 		if !ver.Less(targetVer) { // reached next version after target, have no sense to continue
-			fmt.Println("DB is upgraded")
 			break
 		}
 
 		fmt.Println("\tApplying version:", ver)
-		files, _ := listVersionFiles(migrPath, ver)
+		files, _ := listVersionFiles(fs, ver)
 
-		err := db.ApplyVersion(dbc, ver, files)
+		err := db.ApplyVersion(dbc, ver, fs, files)
 		if err != nil {
 			fmt.Println("Unable to upgrade DB:", err)
 			os.Exit(ECodeMigrFailed)
@@ -177,7 +184,7 @@ func Upgrade(dbc *sql.DB, dbVer, targetVer db.Version, migrPath string, versions
 	}
 }
 
-func Revert(dbc *sql.DB, dbVer, targetVer db.Version, migrPath string, versions []db.Version) {
+func Revert(dbc *sql.DB, dbVer, targetVer db.Version, fs afero.Fs, versions []db.Version) {
 	for i, ver := range versions {
 		if !ver.Less(dbVer) {
 			fmt.Println("\tSkipping version:", ver)
@@ -185,14 +192,21 @@ func Revert(dbc *sql.DB, dbVer, targetVer db.Version, migrPath string, versions 
 		}
 
 		if ver.Less(targetVer) { // reached target version, have no sense to continue
-			fmt.Println("DB is reverted")
 			break
 		}
 
 		fmt.Println("\tReverting version:", ver)
-		_, files := listVersionFiles(migrPath, ver)
+		_, files := listVersionFiles(fs, ver)
 
-		err := db.ApplyVersion(dbc, versions[i+1], files)
+		var nextVer db.Version
+
+		if i+1 < len(versions) {
+			nextVer = versions[i+1]
+		} else {
+			nextVer = targetVer // set target version if need roll back all changes
+		}
+
+		err := db.ApplyVersion(dbc, nextVer, fs, files)
 		if err != nil {
 			fmt.Println("Unable to upgrade DB:", err)
 			os.Exit(ECodeMigrFailed)
@@ -208,12 +222,37 @@ func revertVersions(versions []db.Version) []db.Version {
 	return versions
 }
 
-func findVersion(version db.Version, versions []db.Version) bool {
-	for _, ver := range versions {
-		if ver.Equal(version) {
-			return true
-		}
+func getFS(path string) (afero.Fs, error) {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return nil, err
 	}
 
-	return false
+	if stat.IsDir() {
+		return afero.NewBasePathFs(afero.NewOsFs(), path), nil
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var r io.Reader = f
+
+	switch {
+	case strings.HasSuffix(path, ".tgz") || strings.HasSuffix(path, ".tar.gz"):
+		gr, err := gzip.NewReader(r)
+		if err != nil {
+			return nil, err
+		}
+
+		r = gr
+
+		fallthrough
+	case strings.HasSuffix(path, ".tar"):
+
+		return tarfs.New(tar.NewReader(r)), nil
+	}
+
+	return nil, errors.New("unsupported migrations path")
 }
